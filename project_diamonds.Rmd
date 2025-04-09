@@ -1,0 +1,183 @@
+---
+title: "Shine Brighter: A Close-Up on the Enchanting World of Diamonds!"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r knitr_opts, include = FALSE}
+#knitr::opts_chunk$set(echo = FALSE)
+
+# Uncomment the line below to include code in final pdf/html
+knitr::opts_chunk$set(include = TRUE)
+```
+
+### Authors:
+
+Devora Cavaleiro (20230974), David Guarin (20230602), Carlos Costa (20230543)
+
+## Introduction
+
+Diamonds are precious gemstones composed of carbon atoms arranged in a crystal lattice structure, resulting in exceptional hardness and brilliance. Formed deep within the Earth's mantle under high pressure and temperature, diamonds are brought to the surface through volcanic eruptions. Their unique optical properties, including high refractive index and strong dispersion of light, contribute to their characteristic sparkle.
+
+Reference: Gemological Institute of America (GIA) at <https://www.gia.edu/>.
+
+```{r setup, message = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(skimr)
+library(corrplot)
+library(lmtest)
+library(car)
+```
+
+```{r}
+diamonds <- read_csv('./diamonds.csv')
+```
+
+## Exploring the dataset
+
+```{r}
+head(diamonds)
+```
+
+## Features
+
+-   **Carat:** Carat weight of the Diamond.
+-   **Cut:** Describe cut quality of the diamond. Quality in increasing order Fair, Good, Very Good, Premium, Ideal .
+-   **Color:** Color of the Diamond. With D being the best and J the worst.
+-   **Clarity:** Diamond Clarity refers to the absence of the Inclusions and Blemishes. (In order from Best to Worst, FL = flawless, I3= level 3 inclusions) FL, IF, VVS1, VVS2, VS1, VS2, SI1, SI2, I1, I2, I3
+-   **Depth:** The Height of a Diamond, measured from the Culet to the table, divided by its average Girdle Diameter.
+-   **Table:** The Width of the Diamond's Table expressed as a Percentage of its Average Diameter.
+-   **Price:** the Price of the Diamond.
+-   **X:** Length of the Diamond in mm.
+-   **Y:** Width of the Diamond in mm.
+-   **Z:** Height of the Diamond in mm.
+
+## Analyzing dataset and preprocessing
+
+```{r}
+my_diamonds <- diamonds
+skim_without_charts(my_diamonds)
+```
+
+We created a copy of the dataset to make the pre-processing. By exploring the data we have noticed that the minimum values for Length or Width or Height are 0, since it does not make sense we have decided to drop these records. Additionally, we have deleted the extra index.
+
+```{r}
+my_diamonds <- diamonds
+skim_without_charts(my_diamonds)
+subset(my_diamonds, x == 0 | y == 0 | z == 0)
+my_diamonds <- my_diamonds[!(my_diamonds$x == 0 | my_diamonds$y == 0 | my_diamonds$z == 0), ]
+my_diamonds <- my_diamonds[, -1]
+```
+
+From the variables distribution we can see that: \* Color: most diamonds have a color E, F, and G, that means that they are colorless or near colorless. \* Cut: most diamonds have an ideal, premium or very good cut. \* Clarity: most diamonds have SI1 and VS2, so small imperfections.
+
+```{r}
+ggplot(my_diamonds, aes(x=color)) +
+  geom_bar(fill = "#5D666D") +
+  theme_minimal()
+
+ggplot(my_diamonds, aes(x=cut)) + 
+  geom_bar(fill = "#5D666D") +
+  theme_minimal()
+
+ggplot(my_diamonds, aes(x=clarity)) + 
+  geom_bar(fill = "#5D666D") +
+  theme_minimal()
+```
+
+From the correlation matrix we can conclude that there are high correlations between price and carat, and also it's dimensions. Furthermore, the dimensions are highly correlated with each other. And finally, the depth and price are inversely related.
+
+```{r}
+categorical_variables <- c("cut", "color", "clarity")
+categorical_my_diamonds <- my_diamonds[, categorical_variables]
+numeric_variables <- setdiff(names(my_diamonds), categorical_variables)
+numeric_my_diamonds <- my_diamonds[, numeric_variables]
+corr_matrix <- cor(numeric_my_diamonds)
+corrplot(corr_matrix, method = "square", type = "upper", tl.cex = 0.7, tl.col = "black", cex.lab = 0.8)
+```
+
+## Building the model
+
+We've tried several functional forms to handle the relationship between the dependent and independent variables in order to increase the performance of the model, aiming to increase the R**²** .
+
+### Model with Level-Log functional form (log only on independent variables):
+
+```{r}
+regressor_level_log <- lm(price ~ log(carat) + log(depth) + log(table) + log(x) + log(y) + log(z) + color + cut + clarity, data = my_diamonds)
+summary(regressor_level_log)
+```
+
+### Model with Log-Level functional form (log only on dependent variables):
+
+```{r}
+regressor_log_level <- lm(log(price) ~ carat + depth + table + x + y + z +  color + cut + clarity, data = my_diamonds)
+summary(regressor_log_level)
+```
+
+### Model with mixed functional form, mixing log on both dependent and independent variables:
+
+```{r}
+regressor_mixed <- lm(log(price) ~ log(carat) + depth + table + log(x) + y + z + color + cut + clarity, data = my_diamonds)
+summary(regressor_mixed)
+```
+
+```{r}
+final_reg = regressor_mixed
+```
+
+## Misspecification test
+
+We can also apply the RESET test to check if our model is misspecified. That is, if the functional form of our model is correct or not.
+
+```{r}
+reset(final_reg, vcov = hccm)
+```
+
+The RESET test return a low p-value, which indicates that there is misspecification in our model.
+
+We've tried to add non-linearity (squared and cube terms) to the model in order to account for it but without success.
+
+## Heteroskedasticity test
+
+We've applied both Breusch--Pagan and White-Special tests to check the presence of heteroskedasticity.
+
+### Breusch-Pagan test
+
+```{r}
+bptest(final_reg)
+```
+
+### White-Special test
+
+```{r}
+bptest(final_reg, ~I(fitted(final_reg)) + I(fitted(final_reg)^2))
+```
+
+Both tests have returned a very low p-value, which indicates the presence of heteroskedasticity.
+
+According to the 5th assumption of Gauss-Markov theorem, our model is still unbiased and consistent, but it's no longer **BLUE**.
+
+## Robust estimator
+
+In the presence of heteroskedasticity, the standard errors are biased, leading to incorrect statistical inferences and hypothesis testing. To fix it we should calculate the robust standard errors.
+
+```{r}
+coeftest(final_reg, vcov = hccm)
+```
+
+The results of the robust estimator shows that, at 5% significance level, we reject the null hypothesis that both y and z variables are statistically significant to our model.
+
+We can create and evaluate another model without these variables to comparison:
+
+### Coefficients of robust model without variables y and z:
+
+```{r}
+model_without_yz <- lm(log(price) ~ log(carat) + depth + table + log(x) + color + cut + clarity, data = my_diamonds)
+coeftest(model_without_yz, vcov = hccm)
+```
+
+## Conclusion
+
+It was discovered, that around all the features that the dataset had, the carat is the one which has a stronger impact on the diamonds price. Showing, that the heavy the weight the more expensive the gemstone. Additionally, something interesting that was found, was that out of the 3 dimensions the X dimension meaning the length, is the one that has a stronger influence on the cost. Continuing, it was discovered that colors indeed matter, as there is a negative estimate between colors and price. In other words, the stronger the color the lower the price. This is also presented with the clarity as the purer the precious mineral, meaning the stronger the clarity the higher the price. In conclusion, any customer that wants to buy a new diomond please be aware of this factors as this will decide the value of the diamond you want to buy.
